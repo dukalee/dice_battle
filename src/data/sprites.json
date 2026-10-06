@@ -1,0 +1,173 @@
+{
+  "webpSize": 600,
+  "baseDisplaySize": 380,
+  "characters": {
+    "warrior": {
+      "folder": "Warrior",
+      "poses": {
+        "idle": {
+          "scale": 1.0,
+          "anchor": [
+            0.45,
+            0.6
+          ],
+          "facing": "left"
+        },
+        "attack": {
+          "scale": 1.11,
+          "anchor": [
+            0.62,
+            0.6
+          ],
+          "facing": "left"
+        },
+        "critical_attack": {
+          "scale": 1.39,
+          "anchor": [
+            0.52,
+            0.6
+          ],
+          "facing": "left"
+        },
+        "heal": {
+          "scale": 1.04,
+          "anchor": [
+            0.52,
+            0.61
+          ],
+          "facing": "left"
+        },
+        "critical_heal": {
+          "scale": 1.28,
+          "anchor": [
+            0.53,
+            0.62
+          ],
+          "facing": "left"
+        },
+        "hit": {
+          "scale": 1.0,
+          "anchor": [
+            0.49,
+            0.57
+          ],
+          "facing": "left"
+        }
+      }
+    },
+    "rogue": {
+      "folder": "Rogue",
+      "poses": {
+        "idle": {
+          "scale": 1.0,
+          "anchor": [
+            0.5,
+            0.58
+          ],
+          "facing": "left"
+        },
+        "attack": {
+          "scale": 1.14,
+          "anchor": [
+            0.56,
+            0.56
+          ],
+          "facing": "left"
+        },
+        "critical_attack": {
+          "scale": 1.47,
+          "anchor": [
+            0.52,
+            0.55
+          ],
+          "facing": "left"
+        },
+        "heal": {
+          "scale": 1.28,
+          "anchor": [
+            0.54,
+            0.57
+          ],
+          "facing": "left"
+        },
+        "critical_heal": {
+          "scale": 1.2,
+          "anchor": [
+            0.49,
+            0.54
+          ],
+          "facing": "left"
+        },
+        "hit": {
+          "scale": 1.14,
+          "anchor": [
+            0.53,
+            0.5
+          ],
+          "facing": "left"
+        }
+      }
+    },
+    "mage": {
+      "folder": "Mage",
+      "poses": {
+        "idle": {
+          "scale": 1.0,
+          "anchor": [
+            0.56,
+            0.56
+          ],
+          "facing": "left"
+        },
+        "attack": {
+          "scale": 1.19,
+          "anchor": [
+            0.44,
+            0.55
+          ],
+          "facing": "right"
+        },
+        "critical_attack": {
+          "scale": 1.55,
+          "anchor": [
+            0.6,
+            0.57
+          ],
+          "facing": "left"
+        },
+        "heal": {
+          "scale": 1.28,
+          "anchor": [
+            0.55,
+            0.56
+          ],
+          "facing": "left"
+        },
+        "critical_heal": {
+          "scale": 1.5,
+          "anchor": [
+            0.55,
+            0.56
+          ],
+          "facing": "left"
+        },
+        "hit": {
+          "scale": 1.05,
+          "anchor": [
+            0.55,
+            0.57
+          ],
+          "facing": "left"
+        },
+        "fail": {
+          "scale": 1.05,
+          "anchor": [
+            0.51,
+            0.62
+          ],
+          "facing": "left"
+        }
+      }
+    }
+  }
+}

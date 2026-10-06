@@ -1,0 +1,16 @@
+/* Bundled fonts (SIL Open Font License; see assets/fonts). Subsetted by `npm run fonts:build`. */
+@font-face {
+  font-family: 'Jua';
+  src: url('./assets/fonts/jua.woff2') format('woff2');
+  font-display: block;
+}
+@font-face {
+  font-family: 'Titan One';
+  src: url('./assets/fonts/titanone.woff2') format('woff2');
+  font-display: block;
+}
+@font-face {
+  font-family: 'Black Han Sans';
+  src: url('./assets/fonts/blackhansans.woff2') format('woff2');
+  font-display: block;
+}

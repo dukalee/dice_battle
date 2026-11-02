@@ -25,6 +25,9 @@ export const BUTTON_STYLES = {
  * without a canvas. A click fires when the pointer is pressed and released inside the button.
  */
 export class Button {
+  /** Called after any button's click fires (the game plays the click sound here). */
+  static clickListener: (() => void) | null = null;
+
   enabled = true;
   hover = false;
   pressed = false;
@@ -33,7 +36,7 @@ export class Button {
     public rect: Rect,
     public label: string,
     private readonly onClick: () => void,
-    private readonly style: ButtonStyle = BUTTON_STYLES.blue,
+    public style: ButtonStyle = BUTTON_STYLES.blue,
   ) {}
 
   pointerDown(x: number, y: number): boolean {
@@ -51,7 +54,10 @@ export class Button {
     const wasPressed = this.pressed;
     this.pressed = false;
     this.hover = this.enabled && containsPoint(this.rect, x, y);
-    if (wasPressed && this.enabled && this.hover) this.onClick();
+    if (wasPressed && this.enabled && this.hover) {
+      this.onClick();
+      Button.clickListener?.();
+    }
   }
 
   cancel(): void {

@@ -1,8 +1,10 @@
 import './fonts.css';
 import { COLORS, FONT_FAMILY, LOGICAL_HEIGHT, LOGICAL_WIDTH } from './core/constants';
+import { Bgm } from './core/bgm';
 import { attachPointerInput } from './core/input';
 import { GameLoop } from './core/loop';
 import { SceneManager } from './core/scene';
+import { Button } from './render/ui/button';
 import { CHARACTER_IDS, type CharacterId } from './game/characters';
 import { setupCanvas } from './render/canvas';
 import { loadFonts } from './render/fonts';
@@ -22,6 +24,9 @@ if (!(canvas instanceof HTMLCanvasElement)) throw new Error('#game canvas not fo
 const game = setupCanvas(canvas);
 const manager = new SceneManager<SceneParams>();
 const search = window.location.search;
+const bgm = new Bgm(`${import.meta.env.BASE_URL}audio/bgm.wav`, import.meta.env.BASE_URL);
+bgm.armOnFirstGesture();
+Button.clickListener = () => bgm.playClick();
 
 const loop = new GameLoop({
   update: (dt) => manager.update(dt),
@@ -52,8 +57,11 @@ async function start(): Promise<void> {
     sprites,
     manager,
     search,
+    audio: bgm,
+    sfx: bgm,
     setPaused: (paused) => {
       loop.paused = paused;
+      bgm.setDucked(paused);
     },
   };
 
@@ -75,6 +83,7 @@ async function start(): Promise<void> {
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     if (e.key === 'Escape') e.preventDefault();
+    if (e.key === 'm' || e.key === 'M') bgm.toggleMuteAll();
     manager.keyDown(e.key);
   });
 

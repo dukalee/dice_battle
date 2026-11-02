@@ -1,3 +1,4 @@
+import type { AudioSettings, SoundEffects } from '../core/bgm';
 import type { SceneManager } from '../core/scene';
 import type { CharacterId } from '../game/characters';
 import type { PoseName, SpriteLibrary } from '../render/sprites';
@@ -19,6 +20,10 @@ export interface AppContext {
   manager: SceneManager<SceneParams>;
   /** The page's query string; scenes read `?seed=` through it to create the game RNG. */
   search: string;
+  /** Music volume and mute, changed from the title menu and the pause menu. */
+  audio: AudioSettings;
+  /** Sound effects such as the dice rolling. */
+  sfx: SoundEffects;
   /** Freeze (true) or resume (false) the game loop's update time. Rendering continues while frozen. */
   setPaused(paused: boolean): void;
 }

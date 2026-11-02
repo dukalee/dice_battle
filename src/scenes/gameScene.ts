@@ -18,7 +18,8 @@ import { Button, BUTTON_STYLES } from '../render/ui/button';
 import { ButtonGroup } from '../render/ui/buttonGroup';
 import { drawHud, drawRoundBadge } from '../render/ui/hud';
 import { drawLogWindow, LogBuffer } from '../render/ui/logWindow';
-import { describeTurn, type TurnPlan } from './turnPlan';
+import { SoundControl } from '../render/ui/soundControl';
+import { describeTurn, soundCueFor, type TurnPlan } from './turnPlan';
 import type { AppContext, SceneParams } from './types';
 
 const PLAYER_X = 330;
@@ -31,6 +32,9 @@ const EXPLAIN_MS = 1700; // special result: the dice pop one by one and the effe
 const ACTOR_POSE_MS = 350; // the actor strikes a pose, the banner pops in
 const IMPACT_MS = 750; // the result lands: HP bars, log, hit pose
 const RECOVER_MS = 450; // back to idle before the next turn
+const IDLE_BOB_PX = 5; // how far an idle character floats up and down
+const IDLE_BOB_PERIOD_MS = 2200;
+const IDLE_BOB_BLEND_SPEED = 6; // per second: the bob fades in and out over about 170 ms so poses never pop
 const BEFORE_AI_MS = 600; // a breath between the player's result and the AI's turn
 const ANNOUNCE_MS = 1000; // the AI says what it picked
 const BANNER_MS = 1800;
@@ -51,6 +55,14 @@ const TRAY_RECT = { x: 460, y: 190, w: 360, h: 270 };
  * ended:   someone's HP hit 0 and the player lost; no input
  */
 type Mode = 'choose' | 'throw' | 'busy' | 'ended';
+
+/**
+ * How far (px, negative = up) an idle character is lifted `timeMs` into the scene: a slow, gentle bob.
+ * `phase` (0..1 of a period) lets the two fighters breathe out of step with each other.
+ */
+export function idleBobOffset(timeMs: number, phase = 0): number {
+  return -IDLE_BOB_PX * (0.5 + 0.5 * Math.sin((timeMs / IDLE_BOB_PERIOD_MS + phase) * Math.PI * 2));
+}
 
 export class GameScene implements Scene {
   readonly battle: Battle;
@@ -83,12 +95,15 @@ export class GameScene implements Scene {
   private gameOverTimerMs: number | null = null;
   /** Game time since the scene began (ms). Drives the background and stage animation; frozen while paused. */
   private clock = 0;
+  /** 0..1 per side: how much of the idle bob is applied (1 while idle, 0 during any other pose). */
+  private readonly bobBlend: Record<Side, number> = { player: 1, enemy: 1 };
 
   private readonly attackButton: Button;
   private readonly healButton: Button;
   private readonly pauseButton: Button;
   private readonly buttons: ButtonGroup;
   private readonly pauseMenu: ButtonGroup;
+  private readonly soundControls: SoundControl[];
 
   constructor(
     private readonly app: AppContext,
@@ -106,6 +121,12 @@ export class GameScene implements Scene {
     this.tray = new DiceTray(TRAY_RECT, cosmeticRng, {
       onRelease: () => this.onThrow(),
       onSettled: () => this.onDiceSettled(),
+      onThrow: (power) => app.sfx.playDiceThrow(power),
+      onBounce: (strength) => app.sfx.playDiceBounce(strength),
+      onBonus: () => app.sfx.playCue('bonus'),
+      onChargeStart: () => app.sfx.startDiceCharge(),
+      onCharge: (power) => app.sfx.setDiceChargePower(power),
+      onChargeEnd: () => app.sfx.stopDiceCharge(),
     });
 
     this.attackButton = new Button({ x: 400, y: 628, w: 220, h: 68 }, '공격', () => this.chooseAction('attack'), {
@@ -128,6 +149,10 @@ export class GameScene implements Scene {
       new Button({ x: menuX, y: 362, w: 300, h: 64 }, '재시작', () => this.app.manager.go('characterSelect'), { ...BUTTON_STYLES.blue, fontSize: 30 }),
       new Button({ x: menuX, y: 442, w: 300, h: 64 }, '타이틀', () => this.app.manager.go('title'), { ...BUTTON_STYLES.blue, fontSize: 30 }),
     ]);
+    this.soundControls = [
+      new SoundControl({ x: (LOGICAL_WIDTH - 372) / 2, y: 524, w: 372, h: 56 }, app.audio, 'music', '음악'),
+      new SoundControl({ x: (LOGICAL_WIDTH - 372) / 2, y: 590, w: 372, h: 56 }, app.audio, 'sfx', '효과음'),
+    ];
   }
 
   // ---- pause -----------------------------------------------------------------------------------------------
@@ -138,6 +163,7 @@ export class GameScene implements Scene {
     this.app.setPaused(paused);
     this.buttons.cancel();
     this.pauseMenu.cancel();
+    for (const c of this.soundControls) c.cancel();
     this.tray.pointerCancel();
   }
 
@@ -193,6 +219,7 @@ export class GameScene implements Scene {
         ms: EXPLAIN_MS,
         start: () => {
           this.tray.startHighlight();
+          if (banner.tone === 'critical') this.app.sfx.playCue('criticalSparkle');
           this.explain = { text: '', detail: banner.detail, tone: banner.tone, age: 0, life: EXPLAIN_MS };
         },
         end: () => {
@@ -206,6 +233,8 @@ export class GameScene implements Scene {
         ms: ACTOR_POSE_MS,
         start: () => {
           this.poses[plan.actor] = plan.actorPose;
+          const cue = soundCueFor(plan.action, plan.outcome, this.view[plan.actor].id);
+          if (cue) this.app.sfx.playCue(cue);
           if (banner) this.showBanner(banner.text, '', banner.tone, BANNER_MS);
         },
       },
@@ -339,6 +368,9 @@ export class GameScene implements Scene {
     this.shownHp.enemy = approach(this.shownHp.enemy, v.enemy.hp, HP_BAR_SPEED, dtMs);
 
     this.clock += dtMs;
+    for (const side of ['player', 'enemy'] as const) {
+      this.bobBlend[side] = approach(this.bobBlend[side], this.poses[side] === 'idle' ? 1 : 0, IDLE_BOB_BLEND_SPEED, dtMs);
+    }
     this.tray.update(dtMs);
     this.seq.update(dtMs);
 
@@ -378,14 +410,19 @@ export class GameScene implements Scene {
     return Math.sin(left * 0.08) * 12 * (left / HIT_SHAKE_MS);
   }
 
+  /** Vertical offset of a fighter's sprite: the idle bob, faded out while it plays another pose. */
+  private bobOffset(side: Side): number {
+    return idleBobOffset(this.clock, side === 'player' ? 0 : 0.5) * this.bobBlend[side];
+  }
+
   render(ctx: CanvasRenderingContext2D): void {
     const s = this.view;
     drawBackground(ctx, this.clock);
     drawFloor(ctx);
     drawPlatform(ctx, PLAYER_X, STAGE_Y, 150, ACCENT.blue, this.clock);
     drawPlatform(ctx, ENEMY_X, STAGE_Y, 150, ACCENT.red, this.clock);
-    drawSprite(ctx, this.app.sprites, s.player.id, this.poses.player, PLAYER_X + this.shakeOffset('player'), BODY_Y, 'right');
-    drawSprite(ctx, this.app.sprites, s.enemy.id, this.poses.enemy, ENEMY_X + this.shakeOffset('enemy'), BODY_Y, 'left');
+    drawSprite(ctx, this.app.sprites, s.player.id, this.poses.player, PLAYER_X + this.shakeOffset('player'), BODY_Y + this.bobOffset('player'), 'right');
+    drawSprite(ctx, this.app.sprites, s.enemy.id, this.poses.enemy, ENEMY_X + this.shakeOffset('enemy'), BODY_Y + this.bobOffset('enemy'), 'left');
 
     // the HUD goes on top of the characters, so big critical effects never cover the HP bars
     drawHud(ctx, this.app.sprites, {
@@ -426,10 +463,11 @@ export class GameScene implements Scene {
     ctx.fillStyle = 'rgba(4, 6, 18, 0.7)';
     ctx.fillRect(0, 0, LOGICAL_WIDTH, 720);
     ctx.restore();
-    drawPanel(ctx, { x: (LOGICAL_WIDTH - 420) / 2, y: 180, w: 420, h: 384 }, { radius: 24, border: ACCENT.gold, borderWidth: 3, glow: 'rgba(245,197,66,0.5)' });
+    drawPanel(ctx, { x: (LOGICAL_WIDTH - 420) / 2, y: 180, w: 420, h: 522 }, { radius: 24, border: ACCENT.gold, borderWidth: 3, glow: 'rgba(245,197,66,0.5)' });
     drawText(ctx, '일시정지', LOGICAL_WIDTH / 2, 232, { size: 44, display: true, align: 'center', baseline: 'middle', color: '#f5c542' });
     this.pauseMenu.draw(ctx);
-    drawText(ctx, 'ESC 키로도 열고 닫을 수 있어요', LOGICAL_WIDTH / 2, 538, { size: 18, align: 'center', baseline: 'middle', color: '#c9d0f0' });
+    for (const c of this.soundControls) c.draw(ctx);
+    drawText(ctx, 'ESC 키로도 열고 닫을 수 있어요', LOGICAL_WIDTH / 2, 677, { size: 18, align: 'center', baseline: 'middle', color: '#c9d0f0' });
   }
 
   /** The AI's speech bubble above its head. */
@@ -455,18 +493,22 @@ export class GameScene implements Scene {
   onPointerDown(x: number, y: number): void {
     if (this.paused) {
       this.pauseMenu.pointerDown(x, y);
+      for (const c of this.soundControls) c.pointerDown(x, y);
       return;
     }
     if (this.tray.pointerDown(x, y)) return;
     this.buttons.pointerDown(x, y);
   }
   onPointerMove(x: number, y: number): void {
-    if (this.paused) this.pauseMenu.pointerMove(x, y);
-    else this.buttons.pointerMove(x, y);
+    if (this.paused) {
+      this.pauseMenu.pointerMove(x, y);
+      for (const c of this.soundControls) c.pointerMove(x, y);
+    } else this.buttons.pointerMove(x, y);
   }
   onPointerUp(x: number, y: number): void {
     if (this.paused) {
       this.pauseMenu.pointerUp(x, y);
+      for (const c of this.soundControls) c.pointerUp(x, y);
       return;
     }
     this.tray.pointerUp();
@@ -480,5 +522,6 @@ export class GameScene implements Scene {
     this.tray.pointerCancel();
     this.buttons.cancel();
     this.pauseMenu.cancel();
+    for (const c of this.soundControls) c.cancel();
   }
 }

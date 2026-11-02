@@ -20,7 +20,22 @@ export interface DiceTrayCallbacks {
   onRelease(power: number): DiceResult | null;
   /** Every die has stopped (after the extra dice too, when there are any). */
   onSettled(): void;
+  /** The dice were thrown, and again when the rogue throws its extra dice. `power` is 0..1. For sound only. */
+  onThrow?(power: number): void;
+  /** A die hit the floor (each throw bounces three times, softer each time). `strength` is 0..1. For sound only. */
+  onBounce?(strength: number): void;
+  /** The rogue's "one more!" appears: the first dice pop up. For sound only. */
+  onBonus?(): void;
+  /** The player started holding the tray. For sound only. */
+  onChargeStart?(): void;
+  /** Every update while holding; `power` (0..1) is how long it has been held. For sound only. */
+  onCharge?(power: number): void;
+  /** The hold ended (thrown, cancelled or the tray was hidden). For sound only. */
+  onChargeEnd?(): void;
 }
+
+/** How hard each of a die's three bounces lands; the arc in `dieFrameAt` touches down at t = 1/3, 2/3 and 1. */
+export const BOUNCE_STRENGTHS = [1, 0.7, 0.5] as const;
 
 export type TrayState = 'hidden' | 'ready' | 'charging' | 'rolling' | 'settled';
 
@@ -198,6 +213,10 @@ export class DiceTray {
   /** When the bonus stage begins and when the extra pair is thrown (ms into the roll), or -1 without extra dice. */
   private bonusAt = -1;
   private extraStart = -1;
+  /** How hard the rogue's extra dice are thrown (0..1). */
+  private extraPower = 0;
+  /** Whether `onChargeStart` has been sent without a matching `onChargeEnd`. */
+  private chargeSounding = false;
 
   constructor(
     readonly rect: Rect,
@@ -214,11 +233,13 @@ export class DiceTray {
     this.anims = [];
     this.holdMs = 0;
     this.state = 'ready';
+    this.syncChargeSound();
   }
 
   /** Hide the dice area. */
   clear(): void {
     this.state = 'hidden';
+    this.syncChargeSound();
     this.anims = [];
     this.faces = [];
     this.holdMs = 0;
@@ -258,7 +279,17 @@ export class DiceTray {
     if (this.state !== 'ready' || !containsPoint(this.rect, x, y)) return false;
     this.state = 'charging';
     this.holdMs = 0;
+    this.syncChargeSound();
     return true;
+  }
+
+  /** Keep the hold sound in step with the state: start it when charging begins, stop it when it ends. */
+  private syncChargeSound(): void {
+    const charging = this.state === 'charging';
+    if (charging && !this.chargeSounding) this.callbacks.onChargeStart?.();
+    if (!charging && this.chargeSounding) this.callbacks.onChargeEnd?.();
+    this.chargeSounding = charging;
+    if (charging) this.callbacks.onCharge?.(holdToPower(this.holdMs));
   }
 
   /** Releasing anywhere throws, so letting go outside the tray still works. */
@@ -269,15 +300,17 @@ export class DiceTray {
     if (!result) {
       this.state = 'ready';
       this.holdMs = 0;
-      return;
+    } else {
+      this.startRoll(result, power);
     }
-    this.startRoll(result, power);
+    this.syncChargeSound();
   }
 
   pointerCancel(): void {
     if (this.state !== 'charging') return;
     this.state = 'ready';
     this.holdMs = 0;
+    this.syncChargeSound();
   }
 
   /** Roll without player input (the AI's turn). */
@@ -327,6 +360,7 @@ export class DiceTray {
     });
     // the rogue's extra dice are thrown on their own once the bonus stage is over
     const extraPower = Math.max(power, 0.6);
+    this.extraPower = extraPower;
     extra.forEach((face, j) => {
       const anim = makeAnim(face, finalSlots[result.first.length + j], this.extraStart + j * STAGGER_MS, extraPower, true);
       anim.endScale = shrink;
@@ -335,14 +369,34 @@ export class DiceTray {
     });
     this.rollEnd = Math.max(...this.anims.map((a) => a.startAt + a.duration));
     this.state = 'rolling';
+    this.callbacks.onThrow?.(power);
+  }
+
+  /** Report every bounce that happened between `from` and `to` (ms into the roll). */
+  private emitBounces(from: number, to: number): void {
+    if (!this.callbacks.onBounce) return;
+    for (const a of this.anims) {
+      BOUNCE_STRENGTHS.forEach((strength, k) => {
+        const at = a.startAt + (a.duration * (k + 1)) / BOUNCE_STRENGTHS.length;
+        if (at > from && at <= to) this.callbacks.onBounce?.(strength);
+      });
+    }
   }
 
   update(dtMs: number): void {
     this.clock += dtMs;
     if (this.highlightMs >= 0) this.highlightMs += dtMs;
-    if (this.state === 'charging') this.holdMs += dtMs;
+    if (this.state === 'charging') {
+      this.holdMs += dtMs;
+      this.syncChargeSound();
+    }
     if (this.state !== 'rolling') return;
+    const before = this.elapsed;
     this.elapsed += dtMs;
+    this.emitBounces(before, this.elapsed);
+    if (this.bonusAt > before && this.bonusAt <= this.elapsed) this.callbacks.onBonus?.();
+    // the rogue's extra dice leave the hand a moment after the "one more!" announcement
+    if (this.extraStart > before && this.extraStart <= this.elapsed) this.callbacks.onThrow?.(this.extraPower);
     if (this.elapsed >= this.rollEnd) {
       this.state = 'settled';
       this.callbacks.onSettled();

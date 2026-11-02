@@ -1,4 +1,5 @@
 import { FONT_LOGO, LOGICAL_HEIGHT, LOGICAL_WIDTH } from '../core/constants';
+import { containsPoint, type Rect } from '../core/geometry';
 import type { Scene } from '../core/scene';
 import type { CharacterId } from '../game/characters';
 import { drawBackground } from '../render/background';
@@ -7,7 +8,8 @@ import { drawSprite } from '../render/sprites';
 import { drawText } from '../render/text';
 import { Button, BUTTON_STYLES } from '../render/ui/button';
 import { ButtonGroup } from '../render/ui/buttonGroup';
-import { drawPanel } from '../render/ui/theme';
+import { SoundControl } from '../render/ui/soundControl';
+import { ACCENT, drawPanel } from '../render/ui/theme';
 import type { AppContext } from './types';
 
 interface Fighter {
@@ -45,9 +47,19 @@ export function lungeOffset(timeMs: number, phase = 0): number {
   return 0;
 }
 
+const GEAR_SIZE = 56;
+
+/** The settings panel that drops down from the gear button in the top-right corner. */
+const MENU_PANEL: Rect = { x: LOGICAL_WIDTH - 24 - 420, y: 84, w: 420, h: 282 };
+
 export class TitleScene implements Scene {
   private time = 0;
   private readonly buttons: ButtonGroup;
+  private readonly menuButton: Button;
+  private readonly closeButton: Button;
+  private readonly soundControls: SoundControl[];
+  /** The menu panel is open. While true only the menu takes input. */
+  menuOpen = false;
 
   constructor(private readonly app: AppContext) {
     const w = 330;
@@ -57,6 +69,23 @@ export class TitleScene implements Scene {
       new Button({ x, y: 618, w, h: 80 }, '게임 시작', () => app.manager.go('characterSelect'), { ...BUTTON_STYLES.gold, fontSize: 38 }),
       new Button({ x: x + w + gap, y: 618, w, h: 80 }, '설명서', () => app.manager.go('help'), { ...BUTTON_STYLES.blue, fontSize: 34 }),
     ]);
+
+    this.menuButton = new Button({ x: LOGICAL_WIDTH - 24 - GEAR_SIZE, y: 20, w: GEAR_SIZE, h: GEAR_SIZE }, '', () => this.setMenuOpen(!this.menuOpen), BUTTON_STYLES.blue);
+    this.soundControls = [
+      new SoundControl({ x: MENU_PANEL.x + 24, y: MENU_PANEL.y + 66, w: 372, h: 56 }, app.audio, 'music', '음악'),
+      new SoundControl({ x: MENU_PANEL.x + 24, y: MENU_PANEL.y + 132, w: 372, h: 56 }, app.audio, 'sfx', '효과음'),
+    ];
+    this.closeButton = new Button({ x: MENU_PANEL.x + (MENU_PANEL.w - 160) / 2, y: MENU_PANEL.y + 206, w: 160, h: 52 }, '닫기', () => this.setMenuOpen(false), {
+      ...BUTTON_STYLES.gold,
+      fontSize: 28,
+    });
+  }
+
+  private setMenuOpen(open: boolean): void {
+    this.menuOpen = open;
+    this.buttons.cancel();
+    this.closeButton.cancel();
+    for (const c of this.soundControls) c.cancel();
   }
 
   update(dtMs: number): void {
@@ -120,18 +149,77 @@ export class TitleScene implements Scene {
     drawText(ctx, '주사위로 싸우는 턴제 배틀', LOGICAL_WIDTH / 2, 202, { size: 26, align: 'center', baseline: 'middle', color: '#f3f0ff' });
 
     this.buttons.draw(ctx);
+    this.menuButton.draw(ctx);
+    const { x, y, w, h } = this.menuButton.rect;
+    drawGear(ctx, x + w / 2, y + h / 2 + (this.menuButton.pressed ? 3 : 0));
+    if (this.menuOpen) {
+      drawPanel(ctx, MENU_PANEL, { radius: 22, border: ACCENT.gold, borderWidth: 3, glow: 'rgba(245,197,66,0.5)' });
+      drawText(ctx, '소리 설정', MENU_PANEL.x + MENU_PANEL.w / 2, MENU_PANEL.y + 38, { size: 32, display: true, align: 'center', baseline: 'middle', color: ACCENT.gold });
+      for (const c of this.soundControls) c.draw(ctx);
+      this.closeButton.draw(ctx);
+    }
   }
 
   onPointerDown(x: number, y: number): void {
+    if (this.menuOpen) {
+      if (this.soundControls.some((c) => c.pointerDown(x, y))) return;
+      this.closeButton.pointerDown(x, y);
+      this.menuButton.pointerDown(x, y);
+      // pressing anywhere outside the panel closes it
+      if (!containsPoint(MENU_PANEL, x, y) && !containsPoint(this.menuButton.rect, x, y)) this.setMenuOpen(false);
+      return;
+    }
+    this.menuButton.pointerDown(x, y);
     this.buttons.pointerDown(x, y);
   }
   onPointerMove(x: number, y: number): void {
-    this.buttons.pointerMove(x, y);
+    this.menuButton.pointerMove(x, y);
+    if (this.menuOpen) {
+      for (const c of this.soundControls) c.pointerMove(x, y);
+      this.closeButton.pointerMove(x, y);
+    } else {
+      this.buttons.pointerMove(x, y);
+    }
   }
   onPointerUp(x: number, y: number): void {
+    this.menuButton.pointerUp(x, y);
+    if (this.menuOpen) {
+      for (const c of this.soundControls) c.pointerUp(x, y);
+      this.closeButton.pointerUp(x, y);
+      return;
+    }
     this.buttons.pointerUp(x, y);
   }
   onPointerCancel(): void {
     this.buttons.cancel();
+    this.menuButton.cancel();
+    this.closeButton.cancel();
+    for (const c of this.soundControls) c.cancel();
   }
+}
+
+/** A white gear with eight teeth and a hole in the middle, centered at (cx, cy). */
+function drawGear(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    for (const [da, r] of [[-0.22, 12], [-0.15, 18], [0.15, 18], [0.22, 12]] as const) {
+      const px = Math.cos(a + da) * r;
+      const py = Math.sin(a + da) * r;
+      if (i === 0 && da === -0.22) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+  }
+  ctx.closePath();
+  ctx.moveTo(6, 0);
+  ctx.arc(0, 0, 6, 0, Math.PI * 2, true);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(10, 20, 70, 0.55)';
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.fill('evenodd');
+  ctx.restore();
 }

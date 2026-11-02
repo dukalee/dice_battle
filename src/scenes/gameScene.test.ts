@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SceneManager, type Scene } from '../core/scene';
 import type { CharacterId } from '../game/characters';
-import { GameScene } from './gameScene';
+import { GameScene, idleBobOffset } from './gameScene';
 import type { AppContext, SceneParams } from './types';
 
 // Logical coordinates of the controls (see gameScene.ts)
@@ -25,11 +25,13 @@ function setup(character: CharacterId, seed: number) {
     return stub();
   });
   const setPaused = vi.fn();
-  const app: AppContext = { sprites: {} as AppContext['sprites'], manager, search: `?seed=${seed}`, setPaused };
+  const audio = { volume: () => 0.5, isMuted: () => false, setVolume: vi.fn(), toggleMute: vi.fn() };
+  const sfx = { playDiceThrow: vi.fn(), playDiceBounce: vi.fn(), startDiceCharge: vi.fn(), setDiceChargePower: vi.fn(), stopDiceCharge: vi.fn(), playCue: vi.fn() };
+  const app: AppContext = { sprites: {} as AppContext['sprites'], manager, search: `?seed=${seed}`, audio, sfx, setPaused };
   manager.register('game', (p) => new GameScene(app, p));
   manager.go('game', { character });
   const scene = manager.scene as GameScene;
-  return { manager, scene, setPaused, gameOverParams };
+  return { manager, scene, setPaused, gameOverParams, sfx };
 }
 
 const click = (scene: Scene, p: readonly [number, number]) => {
@@ -416,5 +418,95 @@ describe('GAME OVER', () => {
     expect(fresh.log.all).toHaveLength(1);
     expect(fresh.tray.state).toBe('hidden');
     expect(fresh.mode).toBe('choose');
+  });
+});
+
+describe('idle bob', () => {
+  it('floats between 0 and 5 px above the resting spot', () => {
+    for (let t = 0; t < 5000; t += 37) {
+      const y = idleBobOffset(t);
+      expect(y).toBeLessThanOrEqual(0);
+      expect(y).toBeGreaterThanOrEqual(-5);
+    }
+    const ys = Array.from({ length: 100 }, (_, i) => idleBobOffset(i * 22));
+    expect(Math.min(...ys)).toBeCloseTo(-5, 0);
+    expect(Math.max(...ys)).toBeCloseTo(0, 0);
+  });
+
+  it('repeats every period and lets the two fighters move out of step', () => {
+    expect(idleBobOffset(700)).toBeCloseTo(idleBobOffset(700 + 2200));
+    expect(idleBobOffset(700, 0.5)).not.toBeCloseTo(idleBobOffset(700, 0), 1);
+  });
+
+  it('fades out while a character plays another pose and back in when idle again', () => {
+    const { scene } = setup('warrior', 1);
+    const blend = () => (scene as unknown as { bobBlend: { player: number; enemy: number } }).bobBlend;
+    expect(blend().player).toBe(1);
+    scene.poses.player = 'attack';
+    scene.update(16);
+    expect(blend().player).toBeLessThan(1);
+    expect(blend().player).toBeGreaterThan(0); // eased, not snapped
+    expect(blend().enemy).toBe(1);
+    for (let i = 0; i < 20; i++) scene.update(16);
+    expect(blend().player).toBe(0);
+    scene.poses.player = 'idle';
+    for (let i = 0; i < 20; i++) scene.update(16);
+    expect(blend().player).toBe(1);
+  });
+
+  it('stays still while paused', () => {
+    const { scene } = setup('warrior', 1);
+    click(scene, PAUSE);
+    scene.poses.player = 'hit';
+    scene.update(1000);
+    expect((scene as unknown as { bobBlend: { player: number } }).bobBlend.player).toBe(1);
+  });
+});
+
+describe('turn sounds', () => {
+  const cues = (sfx: { playCue: { mock: { calls: unknown[][] } } }) => sfx.playCue.mock.calls.map((c) => c[0]);
+
+  it('a critical attack sparkles when the dice show it, then plays the character critical attack sound with the move', () => {
+    const { scene, sfx } = setup('warrior', 2); // a double
+    playerTurn(scene, ATTACK);
+    until(scene, () => scene.explain !== null);
+    expect(cues(sfx)).toEqual(['criticalSparkle']);
+    until(scene, () => scene.banner !== null);
+    expect(cues(sfx)).toEqual(['criticalSparkle', 'criticalAttack:warrior']);
+  });
+
+  it('a critical heal sparkles first and then plays the shared critical heal sound', () => {
+    const { scene, sfx } = setup('warrior', 2);
+    playerTurn(scene, HEAL);
+    until(scene, () => scene.banner !== null);
+    expect(cues(sfx)).toEqual(['criticalSparkle', 'criticalHeal']);
+  });
+
+  it('a plain attack or heal plays its sound with no sparkle, as soon as the move starts', () => {
+    const attack = setup('warrior', 1);
+    playerTurn(attack.scene, ATTACK);
+    until(attack.scene, () => attack.scene.poses.player === 'attack');
+    expect(cues(attack.sfx)).toEqual(['attack:warrior']);
+
+    const heal = setup('warrior', 1);
+    playerTurn(heal.scene, HEAL);
+    until(heal.scene, () => heal.scene.poses.player === 'heal');
+    expect(cues(heal.sfx)).toEqual(['heal']);
+  });
+
+  it('a FAIL! gets no sparkle and no attack sound', () => {
+    const { scene, sfx } = setup('mage', 507); // 1, 1, 1
+    playerTurn(scene, ATTACK);
+    until(scene, () => scene.banner !== null);
+    expect(cues(sfx)).toEqual([]);
+  });
+
+  it('plays nothing while the scene is paused mid-explanation', () => {
+    const { scene, sfx } = setup('warrior', 2);
+    playerTurn(scene, ATTACK);
+    until(scene, () => scene.explain !== null);
+    click(scene, PAUSE);
+    for (let i = 0; i < 300; i++) scene.update(16);
+    expect(cues(sfx)).toEqual(['criticalSparkle']);
   });
 });

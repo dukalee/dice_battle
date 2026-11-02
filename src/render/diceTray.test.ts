@@ -36,6 +36,152 @@ function run(tray: DiceTray, maxMs: number, done: () => boolean = () => !tray.is
   return t;
 }
 
+describe('dice sounds', () => {
+  function soundTray(first: number[], extra?: number[]) {
+    const onThrow = vi.fn();
+    const onBounce = vi.fn();
+    const tray = new DiceTray(RECT, createRng(5), { onRelease: () => ({ first, extra }), onSettled: vi.fn(), onThrow, onBounce });
+    tray.enable(first.length);
+    tray.pointerDown(RECT.x + 10, RECT.y + 10);
+    tray.pointerUp();
+    return { tray, onThrow, onBounce };
+  }
+
+  it('reports the throw once, with its power', () => {
+    const { tray, onThrow } = soundTray([2, 5]);
+    expect(onThrow).toHaveBeenCalledTimes(1);
+    const power = onThrow.mock.calls[0][0] as number;
+    expect(power).toBeGreaterThan(0);
+    expect(power).toBeLessThanOrEqual(1);
+    run(tray, 6000);
+    expect(onThrow).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws again, once, when the rogue's extra dice are thrown, a moment after the first throw has landed", () => {
+    const { tray, onThrow } = soundTray([2, 4], [1, 6]);
+    expect(onThrow).toHaveBeenCalledTimes(1);
+    const firstPower = onThrow.mock.calls[0][0] as number;
+    run(tray, 600);
+    expect(onThrow).toHaveBeenCalledTimes(1); // still announcing "one more!"
+    tray.update(60000);
+    expect(onThrow).toHaveBeenCalledTimes(2);
+    expect(onThrow.mock.calls[1][0]).toBeGreaterThanOrEqual(Math.max(firstPower, 0.6));
+  });
+
+  it('announces "one more!" once, between the first throw landing and the extra dice flying', () => {
+    const onBonus = vi.fn();
+    const onThrow = vi.fn();
+    const tray = new DiceTray(RECT, createRng(5), { onRelease: () => ({ first: [2, 4], extra: [1, 6] }), onSettled: vi.fn(), onThrow, onBonus });
+    tray.enable(2);
+    tray.pointerDown(RECT.x + 10, RECT.y + 10);
+    tray.pointerUp();
+    expect(onBonus).not.toHaveBeenCalled();
+    run(tray, 60000, () => onBonus.mock.calls.length > 0);
+    expect(onBonus).toHaveBeenCalledTimes(1);
+    expect(onThrow).toHaveBeenCalledTimes(1); // the extra dice have not been thrown yet
+    tray.update(60000);
+    expect(onBonus).toHaveBeenCalledTimes(1);
+    expect(onThrow).toHaveBeenCalledTimes(2);
+  });
+
+  it('has no "one more!" sound without extra dice', () => {
+    const onBonus = vi.fn();
+    const tray = new DiceTray(RECT, createRng(5), { onRelease: () => ({ first: [2, 4] }), onSettled: vi.fn(), onBonus });
+    tray.enable(2);
+    tray.pointerDown(RECT.x + 10, RECT.y + 10);
+    tray.pointerUp();
+    tray.update(60000);
+    expect(onBonus).not.toHaveBeenCalled();
+  });
+
+  it('throws only once when there are no extra dice', () => {
+    const { tray, onThrow } = soundTray([2, 4]);
+    tray.update(60000);
+    expect(onThrow).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounces three times per die, each softer than the last', () => {
+    const { tray, onBounce } = soundTray([2, 5]);
+    run(tray, 6000);
+    expect(onBounce).toHaveBeenCalledTimes(6);
+    const strengths = onBounce.mock.calls.map((c) => c[0] as number);
+    expect(strengths.filter((s) => s === 1)).toHaveLength(2);
+    expect(strengths.filter((s) => s === 0.7)).toHaveLength(2);
+    expect(strengths.filter((s) => s === 0.5)).toHaveLength(2);
+  });
+
+  it('counts the extra dice too, and one very long frame never skips a bounce', () => {
+    const { tray, onBounce } = soundTray([2, 4], [1, 6]);
+    tray.update(60000);
+    expect(onBounce).toHaveBeenCalledTimes(12);
+  });
+
+  it('is silent while no time passes (paused)', () => {
+    const { tray, onBounce } = soundTray([2, 5]);
+    for (let i = 0; i < 200; i++) tray.update(0);
+    expect(onBounce).not.toHaveBeenCalled();
+  });
+});
+
+describe('hold sound', () => {
+  function holdTray(onRelease: () => DiceResult | null = () => ({ first: [2, 5] })) {
+    const onChargeStart = vi.fn();
+    const onCharge = vi.fn();
+    const onChargeEnd = vi.fn();
+    const tray = new DiceTray(RECT, createRng(5), { onRelease, onSettled: vi.fn(), onChargeStart, onCharge, onChargeEnd });
+    tray.enable(2);
+    return { tray, onChargeStart, onCharge, onChargeEnd };
+  }
+  const inside = [RECT.x + 10, RECT.y + 10] as const;
+
+  it('starts when the tray is pressed and follows the hold power', () => {
+    const { tray, onChargeStart, onCharge } = holdTray();
+    expect(tray.pointerDown(...inside)).toBe(true);
+    expect(onChargeStart).toHaveBeenCalledTimes(1);
+    const first = onCharge.mock.calls.at(-1)?.[0] as number;
+    for (let i = 0; i < 30; i++) tray.update(16);
+    const later = onCharge.mock.calls.at(-1)?.[0] as number;
+    expect(later).toBeGreaterThan(first);
+    expect(later).toBeLessThanOrEqual(1);
+    expect(onChargeStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends once when the dice are thrown', () => {
+    const { tray, onChargeEnd } = holdTray();
+    tray.pointerDown(...inside);
+    tray.update(200);
+    tray.pointerUp();
+    expect(onChargeEnd).toHaveBeenCalledTimes(1);
+    run(tray, 6000);
+    expect(onChargeEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends when the hold is cancelled, when the throw is refused and when the tray is hidden', () => {
+    const cancelled = holdTray();
+    cancelled.tray.pointerDown(...inside);
+    cancelled.tray.pointerCancel();
+    expect(cancelled.onChargeEnd).toHaveBeenCalledTimes(1);
+
+    const refused = holdTray(() => null);
+    refused.tray.pointerDown(...inside);
+    refused.tray.pointerUp();
+    expect(refused.onChargeEnd).toHaveBeenCalledTimes(1);
+
+    const hidden = holdTray();
+    hidden.tray.pointerDown(...inside);
+    hidden.tray.clear();
+    expect(hidden.onChargeEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes no sound for a press outside the tray', () => {
+    const { tray, onChargeStart, onChargeEnd } = holdTray();
+    expect(tray.pointerDown(0, 0)).toBe(false);
+    tray.pointerCancel();
+    expect(onChargeStart).not.toHaveBeenCalled();
+    expect(onChargeEnd).not.toHaveBeenCalled();
+  });
+});
+
 describe('holdToPower', () => {
   it('gives a small but positive power for a tap', () => {
     expect(holdToPower(0)).toBeGreaterThan(0);

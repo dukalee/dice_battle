@@ -1,4 +1,6 @@
+import type { SoundCue } from '../core/cues';
 import type { BattleEvent, Side } from '../game/battle';
+import type { CharacterId } from '../game/characters';
 import type { Action, Outcome } from '../game/rules';
 import type { PoseName } from '../render/sprites';
 
@@ -31,6 +33,16 @@ export function poseFor(action: Action, outcome: Outcome): PoseName {
   if (outcome.fail) return 'fail';
   if (action === 'attack') return outcome.critical ? 'critical_attack' : 'attack';
   return outcome.critical ? 'critical_heal' : 'heal';
+}
+
+/**
+ * The sound for the acting character's move: the same heal chime for everyone, but attacks sound different for each
+ * character. A FAIL! has none.
+ */
+export function soundCueFor(action: Action, outcome: Outcome, actor: CharacterId): SoundCue | null {
+  if (outcome.fail) return null;
+  if (action === 'attack') return outcome.critical ? `criticalAttack:${actor}` : `attack:${actor}`;
+  return outcome.critical ? 'criticalHeal' : 'heal';
 }
 
 export function bannerFor(outcome: Outcome): Banner | null {

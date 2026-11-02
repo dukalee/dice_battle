@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BattleEvent } from '../game/battle';
 import { evaluateAttack, evaluateHeal, type Outcome } from '../game/rules';
-import { bannerFor, describeTurn, poseFor } from './turnPlan';
+import { bannerFor, describeTurn, poseFor, soundCueFor } from './turnPlan';
 
 const attackPose = (o: Outcome) => poseFor('attack', o);
 const healPose = (o: Outcome) => poseFor('heal', o);
@@ -157,5 +157,29 @@ describe('describeTurn', () => {
 
   it('rejects events that are not a turn', () => {
     expect(() => describeTurn([{ type: 'roundCleared', round: 1 }])).toThrow();
+  });
+});
+
+describe('soundCueFor', () => {
+  const ids = ['warrior', 'rogue', 'mage'] as const;
+
+  it('gives each character its own attack sound, and its own critical attack sound', () => {
+    expect(soundCueFor('attack', evaluateAttack('warrior', [3, 5]), 'warrior')).toBe('attack:warrior');
+    expect(soundCueFor('attack', evaluateAttack('rogue', [4, 3]), 'rogue')).toBe('attack:rogue');
+    expect(soundCueFor('attack', evaluateAttack('mage', [2, 5, 3]), 'mage')).toBe('attack:mage');
+    expect(soundCueFor('attack', evaluateAttack('warrior', [4, 4]), 'warrior')).toBe('criticalAttack:warrior');
+    expect(soundCueFor('attack', evaluateAttack('rogue', [4, 2], [3, 5]), 'rogue')).toBe('criticalAttack:rogue');
+    expect(soundCueFor('attack', evaluateAttack('mage', [6, 6, 6]), 'mage')).toBe('criticalAttack:mage');
+  });
+
+  it('uses one heal sound for everyone, and one critical heal sound for everyone', () => {
+    const plain = [evaluateHeal('warrior', [1, 2]), evaluateHeal('rogue', [2, 5]), evaluateHeal('mage', [1, 2, 4])];
+    const crit = [evaluateHeal('warrior', [2, 2]), evaluateHeal('rogue', [2, 6], [4]), evaluateHeal('mage', [3, 3, 3])];
+    plain.forEach((o, i) => expect(soundCueFor('heal', o, ids[i])).toBe('heal'));
+    crit.forEach((o, i) => expect(soundCueFor('heal', o, ids[i])).toBe('criticalHeal'));
+  });
+
+  it('is silent for a FAIL!', () => {
+    expect(soundCueFor('attack', evaluateAttack('mage', [1, 1, 1]), 'mage')).toBeNull();
   });
 });

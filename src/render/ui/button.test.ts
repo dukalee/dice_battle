@@ -61,3 +61,30 @@ describe('Button', () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 });
+
+describe('Button.clickListener', () => {
+  const rect = { x: 0, y: 0, w: 100, h: 40 };
+
+  it('is called after a completed click, but not for a press that ends outside or a disabled button', () => {
+    const listener = vi.fn();
+    Button.clickListener = listener;
+    try {
+      const b = new Button(rect, 'a', () => {});
+      b.pointerDown(10, 10);
+      b.pointerUp(10, 10);
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      b.pointerDown(10, 10);
+      b.pointerUp(500, 500);
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      const off = new Button(rect, 'b', () => {});
+      off.enabled = false;
+      off.pointerDown(10, 10);
+      off.pointerUp(10, 10);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      Button.clickListener = null;
+    }
+  });
+});

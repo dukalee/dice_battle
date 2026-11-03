@@ -7,6 +7,7 @@ import { SceneManager } from './core/scene';
 import { Button } from './render/ui/button';
 import { CHARACTER_IDS, type CharacterId } from './game/characters';
 import { setupCanvas } from './render/canvas';
+import { drawCopyright } from './render/copyright';
 import { loadFonts } from './render/fonts';
 import { warmUpEffects } from './render/warmup';
 import { loadSprites, type PoseName } from './render/sprites';
@@ -31,7 +32,9 @@ Button.clickListener = () => bgm.playClick();
 const loop = new GameLoop({
   update: (dt) => manager.update(dt),
   render: (alpha) => {
-    if (manager.scene) manager.render(game.ctx, alpha);
+    if (!manager.scene) return;
+    manager.render(game.ctx, alpha);
+    drawCopyright(game.ctx);
   },
 });
 
